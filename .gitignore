@@ -7,3 +7,5 @@ __pycache__/
 *.log
 .ipynb_checkpoints/
 outputs/
+*.pkl
+*.json
