@@ -1,17 +1,16 @@
-# main.py
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import r2_score
-
-# Import Modules
 import config
-from src.data_loader import DataLoader
-from src.processing import RankGaussProcessor
-from src.model import ChampionModel
-from src.audit import ModelAuditor
+from data_loader import DataLoader
+from processing import RankGaussProcessor
+from model import ChampionModel
+from audit import ModelAuditor
 
 def main():
+    print("========================================")
     print("   MASTER'S PROJECT: FINAL PIPELINE     ")
+    print("========================================")
 
     # 1. Load Data
     loader = DataLoader(config.DATA_PATH, config.TARGET_PATH)
@@ -61,4 +60,4 @@ def main():
     print("\n[SUCCESS] Pipeline Complete. Model ready for submission.")
 
 if __name__ == "__main__":
-    main()  
+    main()

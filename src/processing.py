@@ -1,4 +1,3 @@
-# src/processing.py
 import pandas as pd
 import joblib
 import os
@@ -16,7 +15,6 @@ class RankGaussProcessor:
     def transform(self, X):
         if self.columns is None:
             raise ValueError("Processor must be fit before transform.")
-        
         X_trans = self.scaler.transform(X)
         return pd.DataFrame(X_trans, columns=self.columns)
 

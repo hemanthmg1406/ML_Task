@@ -1,7 +1,6 @@
-# src/audit.py
 import numpy as np
 import pandas as pd
-from sklearn.metrics import r2_score, mean_squared_error
+from sklearn.metrics import r2_score
 from sklearn.cluster import KMeans
 
 class ModelAuditor:
@@ -14,23 +13,14 @@ class ModelAuditor:
         print("STARTING SYSTEM AUDIT (CRASH TESTS)")
         print("="*40)
         
-        # Baseline
         base_pred = self.model.predict(X_test_qt)
         base_r2 = r2_score(y_test, base_pred)
         print(f"[Baseline] Test R²: {base_r2:.4f}")
 
-        # Test 1: Noise
         self._check_noise(X_test_qt, y_test, base_r2)
-        
-        # Test 2: Drift
         self._check_drift(X_test_qt, y_test)
-        
-        # Test 3: Leakage
         self._check_leakage(X_train, y_train)
-        
-        # Test 4: Segmentation
         self._check_segmentation(X_test_qt, y_test, base_pred)
-
         print("\n[Audit] Diagnostics Complete.")
 
     def _check_noise(self, X, y, base_r2):
@@ -54,7 +44,6 @@ class ModelAuditor:
 
     def _check_leakage(self, X_raw, y):
         print("\n[Test 3] Leakage Hunter")
-        # Ensure indices match
         X_raw = X_raw.reset_index(drop=True)
         y = y.reset_index(drop=True)
         corrs = X_raw.corrwith(y).abs()
@@ -74,7 +63,6 @@ class ModelAuditor:
         for c in range(5):
             rmse = np.sqrt(df[df['cluster']==c]['sq_error'].mean())
             rmse_list.append(rmse)
-            # print(f"   Cluster {c} RMSE: {rmse:.4f}")
             
         ratio = max(rmse_list) / min(rmse_list)
         print(f"   Max/Min Error Ratio: {ratio:.2f}")

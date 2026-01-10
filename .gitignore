@@ -2,10 +2,6 @@
 __pycache__/
 *.pyc
 .DS_Store
-.env
-.env.*
-*.log
 .ipynb_checkpoints/
-outputs/
-*.pkl
-*.json
+artifacts/*.pkl
+artifacts/*.json
