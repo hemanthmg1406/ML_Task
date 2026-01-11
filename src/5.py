@@ -1,104 +1,67 @@
-import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
 import pandas as pd
-from sklearn.model_selection import cross_val_score, KFold
-from xgboost import XGBRegressor  # <--- CHANGED TO REGRESSOR
+import numpy as np
+import xgboost as xgb
+import joblib
+import os
+import processing
+import config
+from sklearn.model_selection import train_test_split
 
-# ==========================================
-# 1. SETUP & DATA LOADING
-# ==========================================
-
-print("Loading data...")
-
-try:
-    # Load Features
-    X = pd.read_csv("./data/dataset_29.csv")
+def generate_report_plots():
+    print("Generating final diagnostic plots for report...")
+    # Load Data and Artifacts
+    X, y = processing.load_data(config.DATA_PATH, config.TARGET_PATH)
+    artifact_path = config.ARTIFACT_DIR
     
-    # Load Target
-    y = pd.read_csv("./data/target_29.csv")
+    feat_proc = processing.RankGaussProcessor()
+    feat_proc.load(artifact_path)
     
-    # Ensure y is a Series and KEEP AS FLOAT (Continuous)
-    if isinstance(y, pd.DataFrame):
-        y = y.iloc[:, 0]
-
-    print("Data loaded successfully.")
-    print(f"Features Shape: {X.shape}")
-    print(f"Target Shape:   {y.shape}")
-    print(f"Target Type:    {y.dtype}") # Should be float64
-
-except Exception as e:
-    print(f"\n[ERROR] Could not load data.\nDetails: {e}")
-    exit()
-
-# ==========================================
-# 2. DEFINE FEATURE SETS (From your Plot)
-# ==========================================
-
-noise_features = [
-    'feat_124', 'feat_165', 'feat_266', 'feat_101', 
-    'feat_200', 'feat_112', 'feat_207'
-]
-
-all_features = X.columns.tolist()
-clean_features = [f for f in all_features if f not in noise_features]
-
-print(f"\nOriginal Feature Count: {len(all_features)}")
-print(f"Filtered Feature Count: {len(clean_features)}")
-
-# ==========================================
-# 3. VERIFICATION: The "Ablation Test" (Regression)
-# ==========================================
-
-def verify_feature_drop(X, y, features_all, features_clean):
-    """
-    Compares model performance with and without noise features 
-    using K-Fold for Regression.
-    """
-    # XGBoost Regressor configuration
-    model = XGBRegressor(
-        n_estimators=100, 
-        max_depth=4, 
-        learning_rate=0.05, 
-        random_state=42,
-        n_jobs=-1,
-        objective='reg:squarederror' # Standard regression objective
-    )
+    target_proc = processing.TargetTransformer()
+    target_proc.load(artifact_path)
     
-    # KFold is standard for regression (Stratified is impossible for continuous targets)
-    cv = KFold(n_splits=5, shuffle=True, random_state=42)
+    model = xgb.XGBRegressor()
+    model.load_model(os.path.join(artifact_path, 'trained_model.json'))
+    final_features = joblib.load(os.path.join(artifact_path, 'feature_list.pkl'))
     
-    print("\n--- Starting Verification (Metric: RMSE) ---")
-    print("Note: Values will be negative (sklearn convention). Closer to 0 is better.")
+    # 80/20 Split for Validation Plotting
+    _, X_test_raw, _, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+    X_test_qt = processing.add_stabilized_interactions(feat_proc.transform(X_test_raw))
     
-    # 1. Test Baseline (All Features)
-    print("Testing Baseline (All Features)...")
-    # We use neg_root_mean_squared_error. 
-    # E.g., -0.15 is BETTER than -0.20
-    scores_base = cross_val_score(model, X[features_all], y, cv=cv, scoring='neg_root_mean_squared_error')
-    avg_base = np.mean(scores_base)
-    std_base = np.std(scores_base)
-    print(f"Baseline RMSE: {avg_base:.5f} (+/- {std_base:.5f})")
-    
-    # 2. Test Candidate (Filtered Features)
-    print("Testing Cleaned (Hard Filter)...")
-    scores_clean = cross_val_score(model, X[features_clean], y, cv=cv, scoring='neg_root_mean_squared_error')
-    avg_clean = np.mean(scores_clean)
-    std_clean = np.std(scores_clean)
-    print(f"Cleaned  RMSE: {avg_clean:.5f} (+/- {std_clean:.5f})")
-    
-    # 3. Conclusion
-    # Since scores are negative (e.g. -0.5), a positive difference means improvement.
-    diff = avg_clean - avg_base
-    
-    print("\n--- Verdict ---")
-    # We accept if the clean model is better (higher score) or basically the same (diff > -0.001)
-    if diff >= -0.001: 
-        print("✅ SUCCESS: Removing features maintained performance.")
-        print(f"   Improvement: {diff:.5f} (Higher is better)")
-        print("   Action: PROCEED with 'clean_features' only.")
-    else:
-        print("⚠️ WARNING: Performance dropped.")
-        print(f"   Loss: {diff:.5f}")
-        print("   Action: Re-evaluate 'noise_features'.")
+    # Predict and Inverse Transform
+    preds_scaled = model.predict(X_test_qt[final_features])
+    preds = target_proc.inverse_transform(preds_scaled)
+    residuals = y_test - preds
 
-# Run the verification
-verify_feature_drop(X, y, all_features, clean_features)
+    # Plot 1: Prediction vs Actual
+    plt.figure(figsize=(8, 6))
+    sns.regplot(x=y_test, y=preds, scatter_kws={'alpha':0.3}, line_kws={'color':'red'})
+    plt.xlabel('Actual Target (Real Units)')
+    plt.ylabel('Predicted Target (Real Units)')
+    plt.title('Prediction Accuracy and Linearity')
+    plt.savefig('plots/final_prediction_accuracy.png')
+    plt.close()
+
+    # Plot 2: Residual Plot (Homoscedasticity)
+    plt.figure(figsize=(8, 6))
+    plt.scatter(preds, residuals, alpha=0.3)
+    plt.axhline(0, color='red', linestyle='--')
+    plt.xlabel('Predicted Value')
+    plt.ylabel('Residual (Error)')
+    plt.title('Residual Plot: Homoscedasticity Check')
+    plt.savefig('plots/final_residual_plot.png')
+    plt.close()
+
+    # Plot 3: Error Distribution
+    plt.figure(figsize=(8, 6))
+    sns.histplot(residuals, kde=True, bins=30)
+    plt.title('Error Distribution (Target Inversion Proof)')
+    plt.savefig('plots/final_error_distribution.png')
+    plt.close()
+
+    print("Success: Diagnostic plots saved to /plots.")
+
+if __name__ == "__main__":
+    os.makedirs('plots', exist_ok=True)
+    generate_report_plots()

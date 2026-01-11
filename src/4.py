@@ -1,70 +1,61 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import config
 import os
-from data_loader import DataLoader
-from processing import RankGaussProcessor
-from src.trained_model import ChampionModel
+import joblib
+import xgboost as xgb
+import config
+import processing
 from sklearn.model_selection import train_test_split
-from sklearn.inspection import permutation_importance
+from sklearn.metrics import mean_squared_error
 
-def run_final_permutation():
-    print("========================================")
-    print("   TEST 4: PERMUTATION (Train vs Test)  ")
-    print("========================================")
-    
-    # 1. Load & Split
-    loader = DataLoader(config.DATA_PATH, config.TARGET_PATH)
-    X_raw, y_raw = loader.load()
-    X_selected = loader.select_features(X_raw, config.TOP_30_FEATURES)
-    
-    X_train, X_test, y_train, y_test = train_test_split(
-        X_selected, y_raw, test_size=config.TEST_SIZE, random_state=config.RANDOM_STATE
+def run_xgb_baseline():
+    print("=== TRAINING TRUE XGBOOST BASELINE ===")
+
+    # 1. Load raw data
+    X, y = processing.load_data(config.DATA_PATH, config.TARGET_PATH)
+
+    # 2. Train/validation split (no leakage)
+    X_train, X_val, y_train, y_val = train_test_split(
+        X,
+        y,
+        test_size=0.2,
+        random_state=config.RANDOM_STATE
     )
-    
-    # 2. Process
-    proc = RankGaussProcessor(config.RANDOM_STATE)
-    X_train_q = proc.fit_transform(X_train)
-    X_test_q = proc.transform(X_test)
-    
-    # 3. Train
-    print("Training Final Model...")
-    model = ChampionModel(config.XGB_PARAMS)
-    model.train(X_train_q, y_train)
-    
-    # 4. Compute Permutation Importance
-    print("Computing Importance on TRAIN set (Memorization Check)...")
-    r_train = permutation_importance(model.model, X_train_q, y_train, n_repeats=10, random_state=42, n_jobs=-1)
-    
-    print("Computing Importance on TEST set (Generalization Check)...")
-    r_test = permutation_importance(model.model, X_test_q, y_test, n_repeats=10, random_state=42, n_jobs=-1)
-    
-    # 5. Plot
-    sorted_idx = r_test.importances_mean.argsort()
-    
-    fig, ax = plt.subplots(figsize=(10, 8))
-    
-    # Plot Test (Green)
-    ax.boxplot(
-        r_test.importances[sorted_idx].T,
-        vert=False,
-        patch_artist=True,
-        boxprops=dict(facecolor="lightgreen", color="green"),
-        labels=X_test_q.columns[sorted_idx]
+
+    # 3. Use ALL raw features (273)
+    feature_list = list(X.columns)
+
+    print(f"Training on {X_train.shape[0]} rows with {len(feature_list)} features")
+
+    # 4. Train baseline XGBoost
+    model = xgb.XGBRegressor(
+        n_estimators=500,
+        max_depth=6,
+        learning_rate=0.05,
+        subsample=0.8,
+        colsample_bytree=0.8,
+        random_state=config.RANDOM_STATE,
+        n_jobs=-1
     )
-    
-    # Plot Train (Red outline) - to compare gap
-    # We overlay the means just to see the gap
-    ax.scatter(r_train.importances_mean[sorted_idx], range(len(sorted_idx)), color='red', label='Train Mean', zorder=5)
-    
-    ax.set_title("Permutation Importance: Test (Green Box) vs Train (Red Dot)")
-    ax.legend()
-    ax.grid(True, linestyle='--', alpha=0.5)
-    
-    save_path = os.path.join('plots', 'permutation_final.png')
-    plt.savefig(save_path)
-    print(f"\n[SUCCESS] Saved {save_path}")
-    print("Look for gaps: If the Red Dot is far to the right of the Green Box, the model is overfitting that feature.")
+
+    model.fit(
+        X_train[feature_list],
+        y_train,
+        eval_set=[(X_val[feature_list], y_val)],
+        verbose=False,
+        early_stopping_rounds=50
+    )
+
+    # 5. Evaluate
+    preds = model.predict(X_val[feature_list])
+    rmse = mean_squared_error(y_val, preds, squared=False)
+
+    print(f"\nBaseline XGB RMSE: {rmse:.5f}")
+
+    # 6. Save baseline artifacts
+    os.makedirs(config.ARTIFACT_DIR, exist_ok=True)
+    model.save_model(os.path.join(config.ARTIFACT_DIR, "baseline_xgb.json"))
+    joblib.dump(feature_list, os.path.join(config.ARTIFACT_DIR, "baseline_features.pkl"))
+
+    print("Baseline model saved.")
 
 if __name__ == "__main__":
-    run_final_permutation()
+    run_xgb_baseline()
