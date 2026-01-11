@@ -11,14 +11,12 @@ DATA_PATH = 'data/dataset_30.csv'
 TARGET_PATH = 'data/target_30.csv'
 
 def run_diagnostics():
-    print("========================================")
     print("   PIPELINE DIAGNOSTICS (joblib fix)    ")
-    print("========================================")
 
     # 1. LOAD ARTIFACTS
     # ------------------------------------------------
     if not os.path.exists(MODEL_PATH) or not os.path.exists(PREPROCESSOR_PATH):
-        print(f"ERROR: Artifacts not found.")
+        print(f" Artifacts not found.")
         return
 
     print(f"[1] Inspecting Model Artifact: {MODEL_PATH}")
@@ -28,36 +26,34 @@ def run_diagnostics():
     # Extract feature names stored inside the XGBoost model
     model_features = model.feature_names
     if model_features is None:
-        print("    ! Warning: Model does not have saved feature names.")
+        print("  Model does not have saved feature names.")
         model_n_features = model.num_features()
     else:
         model_n_features = len(model_features)
     
-    print(f"    -> The Trained Model expects exactly {model_n_features} features.")
+    print(f"   The Trained Model expects exactly {model_n_features} features.")
     if model_features:
-        print(f"    -> First 5 Expected Features: {model_features[:5]}")
+        print(f"   First 5 Expected Features: {model_features[:5]}")
 
     print(f"\n[2] Inspecting Preprocessor: {PREPROCESSOR_PATH}")
     try:
         # CHANGED: Using joblib.load
         preprocessor = joblib.load(PREPROCESSOR_PATH)
-        print(f"    -> Successfully loaded using joblib.")
-        print(f"    -> Type: {type(preprocessor)}")
+        print(f"     Successfully loaded using joblib.")
+        print(f"     Type: {type(preprocessor)}")
     except Exception as e:
-        print(f"    [CRITICAL FAIL] Could not load preprocessor: {e}")
+        print(f"  Could not load preprocessor: {e}")
         return
 
     # 2. LOAD DATA
     # ------------------------------------------------
     print(f"\n[3] Inspecting New Data: {DATA_PATH}")
     df = pd.read_csv(DATA_PATH)
-    print(f"    -> Loaded Shape: {df.shape}")
+    print(f"     Loaded Shape: {df.shape}")
 
     # 3. CRITICAL CHECK: ALIGNMENT
     # ------------------------------------------------
-    print("\n========================================")
     print("   DIAGNOSIS 1: FEATURE ALIGNMENT")
-    print("========================================")
     
     if model_features:
         # Check if the CSV columns match the Model features
@@ -81,9 +77,7 @@ def run_diagnostics():
 
     # 4. CRITICAL CHECK: PREDICTION SCALE
     # ------------------------------------------------
-    print("\n========================================")
     print("   DIAGNOSIS 2: TARGET SCALE (Log vs Raw)")
-    print("========================================")
     
     try:
         # Prepare Input: strictly select the columns the model wants

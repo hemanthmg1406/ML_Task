@@ -1,110 +1,68 @@
-import pandas as pd
-import numpy as np
-import xgboost as xgb
+import os
+import json
 import joblib
-from sklearn.metrics import r2_score
+import pandas as pd
+import xgboost as xgb
+import processing
+import config
 
-# --- CONFIGURATION ---
-DATA_PATH = 'data/dataset_30.csv'
-TARGET_PATH = 'data/target_30.csv'
-MODEL_PATH = 'artifacts/champion_model.json'
-PREPROCESSOR_PATH = 'artifacts/preprocessor.pkl'
+def run_evaluation():
+    print("Initiating clean-room evaluation...")
 
-def evaluate_double_align():
-    print("==================================================")
-    print("   PRODUCTION EVALUATION: DOUBLE ALIGNMENT CHECK  ")
-    print("==================================================")
-
-    # 1. LOAD ARTIFACTS
-    # ------------------------------------------------
-    print("\n[Step 1] Loading Artifacts...")
-    model = xgb.Booster()
-    model.load_model(MODEL_PATH)
-    model_features = model.feature_names
-    print(f" - Model expects {len(model_features)} features.")
-    print(f" - Model First 3: {model_features[:3]}")
-
-    preprocessor = joblib.load(PREPROCESSOR_PATH)
-    print(f" - Preprocessor loaded: {type(preprocessor)}")
-
-    # 2. CHECK PREPROCESSOR MEMORY
-    # ------------------------------------------------
-    # We need to know what order the Preprocessor learned.
-    if hasattr(preprocessor, 'feature_names_in_'):
-        prep_features = list(preprocessor.feature_names_in_)
-        print(f" - Preprocessor expects {len(prep_features)} features.")
-        print(f" - Preprocessor First 3: {prep_features[:3]}")
-        
-        # DEBUG: Check if orders are different
-        if prep_features == model_features:
-            print(" [INFO] Preprocessor and Model want the EXACT SAME order.")
-        else:
-            print(" [CRITICAL DISCOVERY] ORDERS ARE DIFFERENT!")
-            print(" -> This confirms the mismatch theory.")
-            print(f" -> Prep wants: {prep_features[:3]}")
-            print(f" -> Modl wants: {model_features[:3]}")
-    else:
-        print(" [ERROR] Preprocessor does not have 'feature_names_in_'.")
-        print(" -> Cannot safely reorder inputs for the preprocessor.")
-        print(" -> Proceeding with Model Order (High Risk)...")
-        prep_features = model_features # Fallback
-
-    # 3. LOAD DATA
-    # ------------------------------------------------
-    print(f"\n[Step 2] Loading Data: {DATA_PATH}...")
-    df = pd.read_csv(DATA_PATH)
-
-    # 4. ALIGNMENT 1: FOR PREPROCESSOR
-    # ------------------------------------------------
-    print("\n[Step 3] Alignment 1: Feeding the Preprocessor...")
-    try:
-        # Force data to match Preprocessor's expectation
-        X_prep = df[prep_features]
-        print(" - Data reordered to match Preprocessor.")
-        
-        # Transform
-        X_trans_array = preprocessor.transform(X_prep)
-        
-        # Convert back to DataFrame to preserve names for the next step
-        X_trans_df = pd.DataFrame(X_trans_array, columns=prep_features)
-        print(" - Transformation complete.")
-        
-    except KeyError as e:
-        print(f" [FAIL] Missing columns for preprocessor: {e}")
-        return
-
-    # 5. ALIGNMENT 2: FOR MODEL
-    # ------------------------------------------------
-    print("\n[Step 4] Alignment 2: Feeding the Model...")
-    try:
-        # Now shuffle the TRANSFORMED data to match the MODEL'S expectation
-        X_final = X_trans_df[model_features]
-        print(" - Transformed data re-sorted to match Model.")
-        
-        # Create DMatrix
-        dtest = xgb.DMatrix(X_final, feature_names=model_features)
-        
-    except KeyError as e:
-        print(f" [FAIL] Missing columns for model re-sort: {e}")
-        return
-
-    # 6. PREDICT & EVALUATE
-    # ------------------------------------------------
-    print("\n[Step 5] Prediction & Evaluation...")
-    preds = model.predict(dtest)
+    # 1. Load Artifacts (The 'Source of Truth')
+    artifact_path = config.ARTIFACT_DIR
     
-    target = pd.read_csv(TARGET_PATH)
-    y_true = target.iloc[:, 0].values
+    with open(os.path.join(artifact_path, 'schema.json'), 'r') as f:
+        schema = json.load(f)
+        
+    # Load the exact feature list used during the production lock
+    final_features = joblib.load(os.path.join(artifact_path, 'feature_list.pkl'))
+        
+    # Load Feature Processor (RankGauss)
+    processor = processing.RankGaussProcessor()
+    processor.load(artifact_path)
     
-    r2 = r2_score(y_true, preds)
-    corr = np.corrcoef(preds, y_true)[0, 1]
+    # NEW: Load Target Transformer (Yeo-Johnson)
+    target_proc = processing.TargetTransformer()
+    target_proc.load(artifact_path)
+    
+    # Load the XGBoost Model
+    model = xgb.XGBRegressor()
+    model.load_model(os.path.join(artifact_path, 'trained_model.json'))
 
-    print("\n========================================")
-    print("FINAL RESULTS")
-    print("========================================")
-    print(f"R2 SCORE:    {r2:.5f}")
-    print(f"CORRELATION: {corr:.4f}")
-    print("========================================")
+    # 2. Load Evaluation Data
+    eval_path = os.path.join('data', 'EVAL_29.csv')
+    X_eval_raw = pd.read_csv(eval_path)
+
+    # 3. Apply Schema Lock (Ensure column order/presence matches training)
+    print("Applying Schema Lock...")
+    X_eval_raw = X_eval_raw[schema["columns"]]
+
+    # 4. Transform Features (Using LOADED RankGauss stats)
+    print("Applying RankGauss transformation...")
+    X_eval_qt = processor.transform(X_eval_raw)
+
+    # 5. Interaction Engineering (Stabilized logic)
+    X_eval_eng = processing.add_stabilized_interactions(X_eval_qt)
+
+    # 6. Prediction (Model outputs Gaussian-space values)
+    print("Generating predictions from locked model...")
+    preds_scaled = model.predict(X_eval_eng[final_features])
+
+    # 7. NEW: The "Un-Stitch" (Inverse Transform back to Real Units)
+    # This converts the model's math back into the actual target scale
+    print("Inverting target transformation for real-world units...")
+    final_preds = target_proc.inverse_transform(preds_scaled)
+
+    # 8. Formatting the final answer
+    output = pd.DataFrame({'target': final_preds})
+
+    # 9. Saving with the exact naming convention
+    final_output_name = 'EVAL_target01_29.csv'
+    output.to_csv(final_output_name, index=False)
+    
+    print(f"\nSUCCESS: Results inverted and saved to '{final_output_name}'")
+    print("The evaluation file is now ready for submission.")
 
 if __name__ == "__main__":
-    evaluate_double_align()
+    run_evaluation()
