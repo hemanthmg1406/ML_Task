@@ -21,34 +21,26 @@ def run_production_lock():
     print("!!! INITIATING PRODUCTION MODEL LOCK !!!")
     X, y = processing.load_data(config.DATA_PATH, config.TARGET_PATH)
     
-    # 1. Final Preprocessing on 100% Data (Features)
     processor = processing.RankGaussProcessor(config.RANDOM_STATE)
     X_full_qt = processor.fit_transform(X)
     X_full_eng = processing.add_stabilized_interactions(X_full_qt)
     
-    # 2. Final Preprocessing on 100% Data (Target)
     target_proc = processing.TargetTransformer()
     y_transformed = target_proc.fit_transform(y)
     
-    # Use the Top 100 features from config
     new_feats = ['feat_189_div_feat_44', 'feat_189_x_feat_44', 'feat_44_x_feat_266', 'feat_189_x_feat_266']
-    # Ensure we use config.TOP_100_FEATURES
     final_features = sorted(list(set(config.TOP_100_FEATURES + new_feats)))
 
-    # 3. Final Training
     print(f"Training on full {len(X)} samples with {len(final_features)} features...")
     model = xgb.XGBRegressor(**config.XGB_PARAMS)
     model.fit(X_full_eng[final_features], y_transformed)
 
-    # 4. Save All Artifacts
     os.makedirs(config.ARTIFACT_DIR, exist_ok=True)
     
-    # Save Model, Feature Processor, and Target Processor
     model.save_model(os.path.join(config.ARTIFACT_DIR, 'trained_model.json'))
     processor.save(config.ARTIFACT_DIR)
-    target_proc.save(config.ARTIFACT_DIR) # Critical for EVAL
+    target_proc.save(config.ARTIFACT_DIR) 
     
-    # Save Feature List as a serialized object for easy loading in EVAL
     joblib.dump(final_features, os.path.join(config.ARTIFACT_DIR, 'feature_list.pkl'))
     
     schema = {"columns": list(X.columns), "dtypes": {c: str(X[c].dtype) for c in X.columns}}

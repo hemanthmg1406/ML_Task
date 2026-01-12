@@ -5,7 +5,6 @@ import joblib
 from sklearn.preprocessing import QuantileTransformer, PowerTransformer
 
 def load_data(data_path, target_path):
-    """Utility to load features and targets."""
     X = pd.read_csv(data_path)
     y = pd.read_csv(target_path)
     if isinstance(y, pd.DataFrame):
@@ -36,31 +35,25 @@ class RankGaussProcessor:
 
 class TargetTransformer:
     def __init__(self):
-        """Initializes the Yeo-Johnson PowerTransformer."""
         self.pt = PowerTransformer(method='yeo-johnson', standardize=True)
         
     def fit_transform(self, y):
-        """Fits to training labels and returns transformed values."""
         y_reshaped = np.array(y).reshape(-1, 1)
         return self.pt.fit_transform(y_reshaped).ravel()
     
     def transform(self, y):
-        """Applies the learned transformation to new data."""
         y_reshaped = np.array(y).reshape(-1, 1)
         return self.pt.transform(y_reshaped).ravel()
     
     def inverse_transform(self, y_scaled):
-        """Converts Gaussian-space predictions back to real-world units."""
         y_reshaped = np.array(y_scaled).reshape(-1, 1)
         return self.pt.inverse_transform(y_reshaped).ravel()
     
     def save(self, directory):
-        """Saves the transformer as a production artifact."""
         os.makedirs(directory, exist_ok=True)
         joblib.dump(self.pt, os.path.join(directory, 'target_transformer.pkl'))
 
     def load(self, directory):
-        """LOADS the transformer parameters for inverse prediction (Fixed)."""
         path = os.path.join(directory, 'target_transformer.pkl')
         if os.path.exists(path):
             self.pt = joblib.load(path)
@@ -68,7 +61,6 @@ class TargetTransformer:
             raise FileNotFoundError(f"Target transformer not found at {path}")
 
 def add_stabilized_interactions(df):
-    """Adds non-linear interactions using tanh to prevent drift explosion."""
     df = df.copy()
     if 'feat_189' in df.columns and 'feat_44' in df.columns:
         df['feat_189_div_feat_44'] = np.tanh(df['feat_189'] / (df['feat_44'] + 1e-6))
